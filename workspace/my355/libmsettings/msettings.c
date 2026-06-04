@@ -496,7 +496,9 @@ void SetMuteTurboR2(int value)
 ///////// Platform specific scaling
 
 int scaleVolume(int value) {
-	return value * 5; // scale 0-20 to 0-100
+	// return value * 5; // scale 0-20 to 0-100
+	// Scale quadratically 0-20 to 0-100 for softer curve at low volume
+	return ((4 * value + 15) * value) / 19;
 }
 
 int scaleBrightness(int value) {
