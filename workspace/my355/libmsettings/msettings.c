@@ -550,8 +550,19 @@ int scaleExposure(int value) {
 
 ///////// Platform specific, unscaled accessors
 
+#define PWM_PERIOD_PATH "/sys/devices/platform/backlight/backlight/backlight/period"
 void SetRawBrightness(int val) { // 0 - 255
 	printf("SetRawBrightness(%i)\n", val); fflush(stdout);
+	// Update backlight PWM period according to brightness value
+	int period = 1250000;  // 800 Hz
+	if (val < 20) {
+		// 10,000 Hz
+		period =  100000;
+	}
+	int cur_period = getInt(PWM_PERIOD_PATH);
+	if (period != cur_period) {
+		putInt(PWM_PERIOD_PATH, period);
+	}
 	putInt("/sys/class/backlight/backlight/brightness", val);
 }
 
