@@ -13,6 +13,7 @@
 #include <linux/i2c-dev.h>
 #include <tinyalsa/mixer.h>
 
+#include "displaycal.h"
 #include "msettings.h"
 
 ///////////////////////////////////////
@@ -32,10 +33,29 @@ typedef struct SettingsV1 {
 	int audiosink; // was bluetooth true/false before
 } SettingsV1;
 
+typedef struct SettingsV2 {
+	int version; // future proofing
+	int brightness;
+	int headphones;
+	int speaker;
+	int contrast;
+	int saturation;
+	int exposure;
+	int unused[2]; // for future use
+	// NOTE: doesn't really need to be persisted but still needs to be shared
+	int jack;
+	int hdmi;
+	int audiosink; // was bluetooth true/false before
+	int displaycal_enabled;
+	int displaycal_red_gain;
+	int displaycal_green_gain;
+	int displaycal_blue_gain;
+} SettingsV2;
+
 // When incrementing SETTINGS_VERSION, update the Settings typedef and add
 // backwards compatibility to InitSettings!
-#define SETTINGS_VERSION 1
-typedef SettingsV1 Settings;
+#define SETTINGS_VERSION 2
+typedef SettingsV2 Settings;
 static Settings DefaultSettings = {
 	.version = SETTINGS_VERSION,
 	.brightness = SETTINGS_DEFAULT_BRIGHTNESS,
@@ -47,6 +67,10 @@ static Settings DefaultSettings = {
 	.jack = 0,
 	.hdmi = 0,
 	.audiosink = AUDIO_SINK_DEFAULT,
+	.displaycal_enabled = DISPLAYCAL_DEFAULT_ENABLED,
+	.displaycal_red_gain = DISPLAYCAL_DEFAULT_RED_GAIN,
+	.displaycal_green_gain = DISPLAYCAL_DEFAULT_GREEN_GAIN,
+	.displaycal_blue_gain = DISPLAYCAL_DEFAULT_BLUE_GAIN,
 };
 static Settings* settings;
 
@@ -187,6 +211,11 @@ static void route_audio_to_hdmi(int enable) {
 	fclose(fp);
 }
 
+static inline void applyDisplayCalSettings(void) {
+	if (settings->displaycal_enabled)
+		SetRawDisplayCal(1, settings->displaycal_red_gain, settings->displaycal_green_gain, settings->displaycal_blue_gain);
+}
+
 void InitSettings(void) {
 	sprintf(SettingsPath, "%s/msettings.bin", getenv("USERDATA_PATH"));
 
@@ -216,8 +245,13 @@ void InitSettings(void) {
 					memcpy(settings, &DefaultSettings, shm_size);
 
 					// overwrite with migrated data
-					if(version==42) {
-						// do migration (TODO when needed)
+					if(version==1) {
+						printf("Found settings v1.\n");
+						SettingsV1 old;
+						read(fd, &old, sizeof(SettingsV1));
+
+						memcpy(settings, &old, sizeof(SettingsV1));
+						settings->version = SETTINGS_VERSION;
 					}
 					else {
 						printf("Found unsupported settings version: %i.\n", version);
@@ -251,6 +285,7 @@ void InitSettings(void) {
 
 	SetVolume(GetVolume());
 	SetBrightness(GetBrightness());
+	applyDisplayCalSettings();
 }
 int InitializedSettings(void) {
 	return (settings != NULL);
@@ -313,20 +348,19 @@ int GetExposure(void)
 }
 int GetDisplayCalEnabled(void)
 {
-	// my355 does not currently expose a display gamma/LUT control interface.
-	return 0;
+	return settings->displaycal_enabled;
 }
 int GetDisplayCalRedGain(void)
 {
-	return 100;
+	return settings->displaycal_red_gain;
 }
 int GetDisplayCalGreenGain(void)
 {
-	return 100;
+	return settings->displaycal_green_gain;
 }
 int GetDisplayCalBlueGain(void)
 {
-	return 100;
+	return settings->displaycal_blue_gain;
 }
 int GetMutedBrightness(void)
 {
@@ -458,19 +492,34 @@ void SetExposure(int value)
 }
 void SetDisplayCalEnabled(int value)
 {
-	(void)value;
+	int was_enabled = settings->displaycal_enabled;
+	value = (value != 0);
+	settings->displaycal_enabled = value;
+
+	// Disabling only needs hardware writes when we are turning an active LUT off.
+	if (value)
+		applyDisplayCalSettings();
+	else if (was_enabled)
+		SetRawDisplayCal(0, settings->displaycal_red_gain, settings->displaycal_green_gain, settings->displaycal_blue_gain);
+	SaveSettings();
 }
 void SetDisplayCalRedGain(int value)
 {
-	(void)value;
+	settings->displaycal_red_gain = DisplayCal_clampGainValue(value);
+	applyDisplayCalSettings();
+	SaveSettings();
 }
 void SetDisplayCalGreenGain(int value)
 {
-	(void)value;
+	settings->displaycal_green_gain = DisplayCal_clampGainValue(value);
+	applyDisplayCalSettings();
+	SaveSettings();
 }
 void SetDisplayCalBlueGain(int value)
 {
-	(void)value;
+	settings->displaycal_blue_gain = DisplayCal_clampGainValue(value);
+	applyDisplayCalSettings();
+	SaveSettings();
 }
 
 void SetMutedBrightness(int value)
@@ -643,10 +692,16 @@ void SetRawExposure(int val){
 	// not supported on this device, so do nothing
 }
 void SetRawDisplayCal(int enabled, int red_gain, int green_gain, int blue_gain) {
-	(void)enabled;
-	(void)red_gain;
-	(void)green_gain;
-	(void)blue_gain;
+	printf("SetRawDisplayCal(%i,%i,%i,%i)\n", enabled, red_gain, green_gain, blue_gain); fflush(stdout);
+
+	int ret = enabled
+		? DisplayCal_enableWithValues(red_gain, green_gain, blue_gain)
+		: DisplayCal_disable();
+	if (ret != 0) {
+		fprintf(stderr, "SetRawDisplayCal failed to %s display calibration: %i\n",
+			enabled ? "enable" : "disable", ret);
+		fflush(stderr);
+	}
 }
 
 // "SPK Volume" only reaches -37.5dB of the codec's -95dB range, so the bottom of

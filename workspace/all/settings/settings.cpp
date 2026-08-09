@@ -304,7 +304,7 @@ namespace {
         }
 
         bool hasDisplayCal() const {
-            return m_platform == tg5040;
+            return m_platform == tg5040 || m_platform == my355;
         }
 
         bool hasActiveCooling() const {

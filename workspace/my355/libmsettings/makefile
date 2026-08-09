@@ -12,14 +12,15 @@ TARGET=msettings
 
 CC = $(CROSS_COMPILE)gcc
 
-CFLAGS = $$(pkg-config --cflags tinyalsa)
-LDFLAGS = $$(pkg-config --libs tinyalsa) -ldl -lrt -s
+CFLAGS = -I../../all/common $$(pkg-config --cflags tinyalsa libdrm)
+LDFLAGS = $$(pkg-config --libs tinyalsa libdrm) -ldl -lrt -lm -s
 
 OPTM=-Ofast
 
 build: 
 	$(CC) -c -Werror -fpic "$(TARGET).c" $(CFLAGS) -Wl,--no-as-needed $(LDFLAGS)
-	$(CC) -shared -o "lib$(TARGET).so" "$(TARGET).o" $(LDFLAGS)
+	$(CC) -c -Werror -fpic "../../all/common/displaycal_drm.c" $(CFLAGS) -Wl,--no-as-needed $(LDFLAGS)
+	$(CC) -shared -o "lib$(TARGET).so" "$(TARGET).o" "displaycal_drm.o" $(LDFLAGS)
 	mkdir -p "$(PREFIX_LOCAL)/include"
 	mkdir -p "$(PREFIX_LOCAL)/lib"
 	cp "$(TARGET).h" "$(PREFIX_LOCAL)/include"
