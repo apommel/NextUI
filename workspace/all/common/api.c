@@ -2380,10 +2380,7 @@ int GFX_blitHardwareGroup(SDL_Surface *dst, int show_setting)
 
 			if (show_wifi)
 			{
-				int asset =
-					strength == SIGNAL_STRENGTH_HIGH ? ASSET_WIFI : strength == SIGNAL_STRENGTH_MED ? ASSET_WIFI_MED
-																: strength == SIGNAL_STRENGTH_LOW	? ASSET_WIFI_LOW
-																									: ASSET_WIFI_OFF; // this should use ASSET_WIFI and be greyed out
+				int asset = WIFI_strengthAsset(strength);
 				SDL_Rect wifi_rect = asset_rects[asset];
 				int x = ox;
 				int y = oy + (SCALE1(PILL_SIZE) - wifi_rect.h) / 2;
@@ -4744,6 +4741,80 @@ FALLBACK_IMPLEMENTATION void PLAT_setNetworkTimeSync(bool on) {}
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
+// Cached by PLAT_getNetworkStatus so the drawing paths don't shell out.
+// A platform overriding one of the three getters below should override all.
+static struct WIFI_connection network_connection = {
+	.valid = false,
+	.freq = -1,
+	.link_speed = -1,
+	.noise = -1,
+	.rssi = -1,
+	.ip = {0},
+	.ssid = {0},
+};
+static bool network_bt_connected = false;
+
+void WIFI_connectionReset(struct WIFI_connection *connection_info)
+{
+	connection_info->valid = false;
+	connection_info->freq = -1;
+	connection_info->link_speed = -1;
+	connection_info->noise = -1;
+	connection_info->rssi = -1;
+	*connection_info->ip = '\0';
+	*connection_info->ssid = '\0';
+}
+
+FALLBACK_IMPLEMENTATION SignalThresholds PLAT_signalThresholds(void)
+{
+	return (SignalThresholds){ -60, -70 };
+}
+
+int WIFI_strengthAsset(ConnectionStrength strength)
+{
+	switch (strength) {
+		case SIGNAL_STRENGTH_HIGH: return ASSET_WIFI;
+		case SIGNAL_STRENGTH_MED:  return ASSET_WIFI_MED;
+		case SIGNAL_STRENGTH_LOW:  return ASSET_WIFI_LOW;
+		default: return ASSET_WIFI_OFF; // this should use ASSET_WIFI and be greyed out
+	}
+}
+
+ConnectionStrength WIFI_rssiStrength(int rssi)
+{
+	if (rssi == -1)
+		return SIGNAL_STRENGTH_OFF;
+	if (rssi == 0)
+		return SIGNAL_STRENGTH_DISCONNECTED;
+
+	SignalThresholds t = PLAT_signalThresholds();
+	if (rssi >= t.high)
+		return SIGNAL_STRENGTH_HIGH;
+	if (rssi >= t.med)
+		return SIGNAL_STRENGTH_MED;
+	return SIGNAL_STRENGTH_LOW;
+}
+
+FALLBACK_IMPLEMENTATION void PLAT_getNetworkStatus(int *is_online)
+{
+	if (PLAT_wifiEnabled())
+		PLAT_wifiConnection(&network_connection);
+	else
+		WIFI_connectionReset(&network_connection);
+
+	if (is_online)
+		*is_online = (network_connection.valid && network_connection.ssid[0] != '\0');
+
+	network_bt_connected = PLAT_bluetoothEnabled() && PLAT_bluetoothConnected();
+}
+
+FALLBACK_IMPLEMENTATION ConnectionStrength PLAT_connectionStrength(void)
+{
+	if (!PLAT_wifiEnabled() || !network_connection.valid)
+		return SIGNAL_STRENGTH_OFF;
+	return WIFI_rssiStrength(network_connection.rssi);
+}
+
 FALLBACK_IMPLEMENTATION void PLAT_wifiInit() {}
 FALLBACK_IMPLEMENTATION bool PLAT_hasWifi() { return false; }
 FALLBACK_IMPLEMENTATION bool PLAT_wifiEnabled() { return false; }
@@ -4778,7 +4849,7 @@ FALLBACK_IMPLEMENTATION void PLAT_bluetoothUnpair(char *addr) {}
 FALLBACK_IMPLEMENTATION void PLAT_bluetoothConnect(char *addr) {}
 FALLBACK_IMPLEMENTATION void PLAT_bluetoothDisconnect(char *addr) {}
 FALLBACK_IMPLEMENTATION bool PLAT_bluetoothConnected() { return false; }
-FALLBACK_IMPLEMENTATION bool PLAT_btIsConnected(void) { return PLAT_bluetoothConnected(); }
+FALLBACK_IMPLEMENTATION bool PLAT_btIsConnected(void) { return network_bt_connected; }
 FALLBACK_IMPLEMENTATION void PLAT_bluetoothStreamInit(int ch, int samplerate) {}
 FALLBACK_IMPLEMENTATION void PLAT_bluetoothStreamBegin(int buffersize) {}
 FALLBACK_IMPLEMENTATION void PLAT_bluetoothStreamEnd() {}

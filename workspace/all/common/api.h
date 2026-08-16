@@ -743,6 +743,15 @@ typedef enum {
 	SIGNAL_STRENGTH_HIGH,
 } ConnectionStrength;
 ConnectionStrength PLAT_connectionStrength(void);
+
+// RSSI cutoffs in dBm. Platforms whose driver reports a biased RSSI override it.
+typedef struct { int high; int med; } SignalThresholds;
+SignalThresholds PLAT_signalThresholds(void);
+// maps a raw RSSI to a display strength using those cutoffs
+ConnectionStrength WIFI_rssiStrength(int rssi);
+// the indicator asset for a display strength
+int WIFI_strengthAsset(ConnectionStrength strength);
+
 int PLAT_setDateTime(int y, int m, int d, int h, int i, int s);
 
 void PLAT_initLeds(LightSettings *lights);
@@ -808,6 +817,9 @@ struct WIFI_connection {
 	int link_speed;
 	int noise;
 };
+
+// resets a connection struct to "not connected"
+void WIFI_connectionReset(struct WIFI_connection *connection_info);
 
 // initializes our wifi context and synchronizes it with the current system state
 void PLAT_wifiInit();

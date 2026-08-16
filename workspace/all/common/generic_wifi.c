@@ -62,6 +62,68 @@ static bool wifi_supplicant_running(void) {
     return system("pidof wpa_supplicant > /dev/null 2>&1") == 0;
 }
 
+// outside this range the source has nothing real to report, so we try the next
+#define RSSI_PLAUSIBLE(v) ((v) < 0 && (v) > -110)
+
+// Signal strength, preferred source: iw is not installed on every platform
+static bool wifi_signal_poll(struct WIFI_connection *connection_info) {
+    char cmd[128];
+    char output[512];
+    snprintf(cmd, sizeof(cmd), "%s signal_poll 2>/dev/null", WPA_CLI_CMD);
+    if (wifi_run_cmd(cmd, output, sizeof(output)) != 0)
+        return false;
+
+    char *rssi = strstr(output, "RSSI=");
+    if (!rssi)
+        return false;
+    int val = atoi(rssi + 5);
+    if (!RSSI_PLAUSIBLE(val))
+        return false;
+    connection_info->rssi = val;
+
+    char *speed = strstr(output, "LINKSPEED=");
+    if (speed)
+        connection_info->link_speed = atoi(speed + 10);
+
+    return true;
+}
+
+// Signal strength, fallback source
+static bool wifi_iw_link(struct WIFI_connection *connection_info) {
+    char cmd[128];
+    char link_info[1024];
+    snprintf(cmd, sizeof(cmd), "iw dev %s link 2>/dev/null", WIFI_INTERFACE);
+    if (wifi_run_cmd(cmd, link_info, sizeof(link_info)) != 0)
+        return false;
+
+    // signal: -XX dBm
+    char *signal = strstr(link_info, "signal:");
+    if (!signal)
+        return false;
+    int val = atoi(signal + 7);
+    if (!RSSI_PLAUSIBLE(val))
+        return false;
+    connection_info->rssi = val;
+
+    // tx bitrate: XXX.X MBit/s
+    char *bitrate = strstr(link_info, "tx bitrate:");
+    if (bitrate)
+        connection_info->link_speed = (int)atof(bitrate + 11);
+
+    return true;
+}
+
+// Driver power save makes the reported RSSI swing 20dB between polls, which
+// flickers the indicator. Atomic: power monitor and settings page both poll.
+static _Atomic int rssi_avg = 0;
+
+static int wifi_smooth_rssi(int rssi) {
+    int avg = rssi_avg;
+    avg = avg ? (avg * 2 + rssi) / 3 : rssi;
+    rssi_avg = avg;
+    return avg;
+}
+
 // Helper to get IP address of wifi interface
 static bool wifi_get_ip(char *ip, size_t len) {
     char cmd[256];
@@ -261,7 +323,8 @@ int PLAT_wifiConnection(struct WIFI_connection *connection_info)
 {
 	if (!CFG_getWifi()) {
 		wifilog("PLAT_wifiConnection: wifi is currently disabled.\n");
-		connection_reset(connection_info);
+		WIFI_connectionReset(connection_info);
+		rssi_avg = 0;
 		return -1;
 	}
 
@@ -271,14 +334,16 @@ int PLAT_wifiConnection(struct WIFI_connection *connection_info)
 	char cmd[128];
 	snprintf(cmd, sizeof(cmd), "%s status 2>/dev/null", WPA_CLI_CMD);
 	if (wifi_run_cmd(cmd, status, sizeof(status)) != 0) {
-		connection_reset(connection_info);
+		WIFI_connectionReset(connection_info);
+		rssi_avg = 0;
 		return -1;
 	}
 
 	// Parse wpa_state
 	char *state_line = strstr(status, "wpa_state=");
 	if (!state_line || strstr(state_line, "COMPLETED") == NULL) {
-		connection_reset(connection_info);
+		WIFI_connectionReset(connection_info);
+		rssi_avg = 0;
 		wifilog("PLAT_wifiConnection: Not connected\n");
 		return 0;
 	}
@@ -311,30 +376,18 @@ int PLAT_wifiConnection(struct WIFI_connection *connection_info)
 	// Get IP address
 	wifi_get_ip(connection_info->ip, sizeof(connection_info->ip));
 
-	// Get signal strength from iw
 	wifilog("PLAT_wifiConnection: Retrieving signal strength...\n");
 	connection_info->rssi = -1;
 	connection_info->link_speed = -1;
 	connection_info->noise = -1;
-	
-	snprintf(cmd, sizeof(cmd), "iw dev %s link 2>/dev/null", WIFI_INTERFACE);
-	char link_info[1024];
-	if (wifi_run_cmd(cmd, link_info, sizeof(link_info)) == 0) {
-		// Parse signal: -XX dBm
-		char *signal = strstr(link_info, "signal:");
-		if (signal) {
-			connection_info->rssi = atoi(signal + 7);
-		}
-		// Parse tx bitrate: XXX.X MBit/s
-		char *bitrate = strstr(link_info, "tx bitrate:");
-		if (bitrate) {
-			connection_info->link_speed = (int)atof(bitrate + 11);
-		}
+
+	if (wifi_signal_poll(connection_info) || wifi_iw_link(connection_info))
+		connection_info->rssi = wifi_smooth_rssi(connection_info->rssi);
+	else {
+		// no source, keep showing an indicator rather than hiding it
+		wifilog("no signal strength source available.\n");
+		connection_info->rssi = -60;
 	}
-    else {
-        wifilog("iw command is not supported.");
-        connection_info->rssi = -60;
-    }
 
 	wifilog("Connected AP: %s\n", connection_info->ssid);
 	wifilog("IP address: %s\n", connection_info->ip);
