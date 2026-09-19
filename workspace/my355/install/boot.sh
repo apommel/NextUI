@@ -79,7 +79,6 @@ EOF
 fi
 
 touch /tmp/fbdisplay_exit
-cat /dev/zero > /dev/fb0
 
 # only show splash if either UPDATE_PATH or pakz files exist
 SHOW_SPLASH="no"
@@ -134,7 +133,7 @@ for pakz in $PAKZ_PATH; do
 done
 
 # install/update
-if [ -f "$UPDATE_PATH" ]; then 
+if [ -f "$UPDATE_PATH" ]; then
 	cd $(dirname "$0")/$PLATFORM
 	if [ -d "$SYSTEM_PATH" ]; then
 		echo "TEXT:Updating NextUI" > /tmp/show2.fifo
