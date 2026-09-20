@@ -79,9 +79,9 @@ void getFile(char* path, char* buffer, size_t buffer_size) {
 		size_t size = ftell(file);
 		if (size>buffer_size-1) size = buffer_size - 1;
 		rewind(file);
-		fread(buffer, sizeof(char), size, file);
+		// terminate at what was actually read, sysfs always reports a page
+		buffer[fread(buffer, sizeof(char), size, file)] = '\0';
 		fclose(file);
-		buffer[size] = '\0';
 	}
 }
 void putFile(char* path, char* contents) {
@@ -238,11 +238,12 @@ void InitSettings(void) {
 
 		// persisted with the rest of the struct but audiomon owns it at runtime
 		settings->audiosink = AUDIO_SINK_DEFAULT;
+
+		// keymon owns these from here on, a client must not clobber them
+		settings->jack = JACK_enabled();
+		settings->hdmi = HDMI_enabled();
 	}
 
-	// Always re-set Jack and HDMI according to hardware state
-	settings->jack = JACK_enabled();
-	settings->hdmi = HDMI_enabled();
 	route_audio_to_hdmi(settings->hdmi); // per app start, launch.sh clears it at boot
 
 	printf("brightness: %i (hdmi: %i)\nspeaker: %i (jack: %i)\n", settings->brightness, settings->hdmi, settings->speaker, settings->jack); 
@@ -291,8 +292,9 @@ int GetAudioSink(void) {
 	return settings->audiosink;
 }
 
+// the cable, read live; settings->hdmi is what keymon has applied for it
 int GetHDMI(void) {
-	return settings->hdmi;
+	return HDMI_enabled();
 };
 
 int GetMute(void) { 
