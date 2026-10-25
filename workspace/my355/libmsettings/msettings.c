@@ -92,7 +92,7 @@ void putFile(char* path, char* contents) {
 	}
 }
 void putInt(char* path, int value) {
-	char buffer[16]; // ns periods don't fit in 8
+	char buffer[8];
 	sprintf(buffer, "%d", value);
 	putFile(path, buffer);
 }
@@ -549,7 +549,8 @@ int scaleVolume(int value) {
 
 int scaleBrightness(int value) {
 	int raw;
-	// even 1.48x steps, floored where the backlight still lights
+	// even 1.48x steps, floored where the backlight still lights; the vendor
+	// kernel's table lifts 1-38 to 7.8-15% duty, mainline's is the duty
 	switch (value) {
 		case  0: raw =   5; break;	//   2.0%
 		case  1: raw =   7; break;	//   2.7%
@@ -611,17 +612,10 @@ int scaleExposure(int value) {
 
 ///////// Platform specific, unscaled accessors
 
-#define BL_PWM "/sys/class/pwm/pwmchip0/pwm0" // launch.sh takes it from pwm-backlight
-#define BL_PERIOD 1250000 // ns, the 800Hz the driver used
-
 void SetRawBrightness(int val) { // 0 - 255
 	if (settings->hdmi) val = 0; // panel is unused while docked
 	printf("SetRawBrightness(%i)\n", val); fflush(stdout);
-
-	// all three every time, so the channel recovers if it loses state
-	putInt(BL_PWM "/period", BL_PERIOD);
-	putInt(BL_PWM "/duty_cycle", val * BL_PERIOD / 255);
-	putInt(BL_PWM "/enable", val > 0);
+	putInt("/sys/class/backlight/backlight/brightness", val);
 }
 
 void SetRawColortemp(int val) { // 0 - 100
